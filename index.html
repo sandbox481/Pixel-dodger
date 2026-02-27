@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<title>Pixel Dodger: Neon Rush</title>
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Pixel Dodger">
+
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: black;
+    touch-action: none;
+}
+canvas {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    background: black;
+}
+</style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+resizeCanvas();
+window.addEventListener("resize", resizeCanvas);
+
+let gameState = "menu";
+let score = 0;
+let highScore = localStorage.getItem("pixelDodgerHighScore") || 0;
+let difficulty = 0;
+
+let gridOffset = 0;
+let colorShift = 0;
+let shakeTime = 0;
+
+let player = {
+    x: canvas.width / 2 - 15,
+    y: canvas.height - 80,
+    size: 30,
+    speed: 8
+};
+
+let obstacles = [];
+let particles = [];
+
+/* SCREEN SHAKE */
+function applyShake() {
+    if (shakeTime > 0) {
+        const dx = (Math.random() - 0.5) * 20;
+        const dy = (Math.random() - 0.5) * 20;
+        ctx.translate(dx, dy);
+        shakeTime--;
+    }
+}
+
+/* MUSIC */
+let audioCtx;
+let isMusicPlaying = false;
+
+function startMusic() {
+    if (isMusicPlaying) return;
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    isMusicPlaying = true;
+
+    const melody = [659,659,0,659,0,523,659,0,784,0,0,392,0,0];
+    let index = 0;
+
+    function playNote() {
+        if (!isMusicPlaying) return;
+
+        if (melody[index] !== 0) {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+
+            osc.type = "square";
+            osc.frequency.value = melody[index];
+            gain.gain.value = 0.1;
+
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.18);
+        }
+
+        index = (index + 1) % melody.length;
+        setTimeout(playNote, 200);
+    }
+
+    playNote();
+}
+
+canvas.addEventListener("click", startMusic);
+canvas.addEventListener("touchstart", startMusic);
+
+/* CONTROLS */
+let keys = {};
+document.addEventListener("keydown", e => keys[e.key] = true);
+document.addEventListener("keyup", e => keys[e.key] = false);
+
+canvas.addEventListener("touchmove", e => {
+    player.x = e.touches[0].clientX - player.size/2;
+});
+
+canvas.addEventListener("click", () => {
+    if (gameState === "menu") {
+        resetGame();
+        gameState = "playing";
+    } else if (gameState === "gameover") {
+        gameState = "menu";
+    }
+});
+
+/* BACKGROUND */
+function drawBackground() {
+    gridOffset += 2;
+    colorShift += 1;
+    if (gridOffset > 40) gridOffset = 0;
+
+    for (let y = -40; y < canvas.height; y += 40) {
+        for (let x = 0; x < canvas.width; x += 40) {
+            let hue = (x + y + colorShift) % 360;
+            ctx.strokeStyle = "hsl(" + hue + ", 100%, 50%)";
+            ctx.strokeRect(x, y + gridOffset, 40, 40);
+        }
+    }
+}
+
+/* EXPLOSION */
+function createExplosion(x, y) {
+    for (let i = 0; i < 40; i++) {
+        particles.push({
+            x: x,
+            y: y,
+            vx: (Math.random() - 0.5) * 10,
+            vy: (Math.random() - 0.5) * 10,
+            size: Math.random() * 6,
+            life: 30
+        });
+    }
+}
+
+/* PLAYER */
+function drawPlayer() {
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "cyan";
+    ctx.fillStyle = "white";
+    ctx.fillRect(player.x, player.y, player.size, player.size);
+    ctx.shadowBlur = 0;
+}
+
+/* UPDATE GAME */
+function updateGame() {
+
+    score++;
+    difficulty = Math.min(10, Math.floor(score / 500));
+
+    if (Math.random() < 0.05) {
+        obstacles.push({
+            x: Math.random() * canvas.width,
+            y: -20,
+            size: 30,
+            speed: 4 + difficulty
+        });
+    }
+
+    obstacles.forEach(o => o.y += o.speed);
+
+    for (let o of obstacles) {
+        if (
+            player.x < o.x + o.size &&
+            player.x + player.size > o.x &&
+            player.y < o.y + o.size &&
+            player.y + player.size > o.y
+        ) {
+            createExplosion(player.x + player.size/2, player.y + player.size/2);
+            shakeTime = 15;
+
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem("pixelDodgerHighScore", highScore);
+            }
+
+            gameState = "gameover";
+        }
+    }
+
+    if (keys["ArrowLeft"]) player.x -= player.speed;
+    if (keys["ArrowRight"]) player.x += player.speed;
+
+    player.x = Math.max(0, Math.min(canvas.width - player.size, player.x));
+
+    particles.forEach(p => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life--;
+    });
+
+    particles = particles.filter(p => p.life > 0);
+}
+
+/* DRAW GAME */
+function drawGame() {
+    ctx.save();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    applyShake();
+
+    drawBackground();
+    drawPlayer();
+
+    ctx.fillStyle = "red";
+    obstacles.forEach(o => ctx.fillRect(o.x, o.y, o.size, o.size));
+
+    ctx.fillStyle = "orange";
+    particles.forEach(p => ctx.fillRect(p.x, p.y, p.size, p.size));
+
+    ctx.fillStyle = "white";
+    ctx.font = "20px monospace";
+    ctx.fillText("Score: " + score, 20, 30);
+    ctx.fillText("High Score: " + highScore, 20, 55);
+
+    ctx.restore();
+}
+
+/* MENU */
+function drawMenu() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawBackground();
+
+    ctx.fillStyle = "white";
+    ctx.font = "50px monospace";
+    ctx.fillText("PIXEL DODGER", canvas.width/2 - 200, canvas.height/2 - 80);
+
+    ctx.font = "25px monospace";
+    ctx.fillText("High Score: " + highScore, canvas.width/2 - 120, canvas.height/2);
+
+    ctx.fillStyle = "cyan";
+    ctx.fillRect(canvas.width/2 - 100, canvas.height/2 + 40, 200, 60);
+
+    ctx.fillStyle = "black";
+    ctx.fillText("PLAY", canvas.width/2 - 35, canvas.height/2 + 80);
+}
+
+function drawGameOver() {
+    drawGame();
+    ctx.fillStyle = "white";
+    ctx.font = "50px monospace";
+    ctx.fillText("GAME OVER", canvas.width/2 - 180, canvas.height/2);
+    ctx.font = "20px monospace";
+    ctx.fillText("Click to return to menu", canvas.width/2 - 140, canvas.height/2 + 40);
+}
+
+function resetGame() {
+    obstacles = [];
+    particles = [];
+    score = 0;
+}
+
+/* LOOP */
+function gameLoop() {
+    if (gameState === "menu") drawMenu();
+    if (gameState === "playing") {
+        updateGame();
+        drawGame();
+    }
+    if (gameState === "gameover") drawGameOver();
+    requestAnimationFrame(gameLoop);
+}
+gameLoop();
+
+/* SERVICE WORKER */
+if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("service-worker.js");
+}
+</script>
+</body>
+</html>
